@@ -24,14 +24,14 @@ import com.accesoriosApolo.ws.model.Rol;
 import com.accesoriosApolo.ws.model.Usuario;
 import com.accesoriosApolo.ws.dto.LoginRequest;
 import com.accesoriosApolo.ws.dto.SignupRequest;
+import com.accesoriosApolo.ws.request.VerificarOTPRequest;
 import com.accesoriosApolo.ws.dto.JwtResponse;
 import com.accesoriosApolo.ws.dto.MessageResponse;
 import com.accesoriosApolo.ws.repository.RolRepository;
 import com.accesoriosApolo.ws.repository.UsuarioRepository;
 import com.accesoriosApolo.ws.security.JwtUtils;
 import com.accesoriosApolo.ws.security.UserDetailsImpl;
-
-
+import com.accesoriosApolo.ws.service.OTPService;
 
 @CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
@@ -52,31 +52,14 @@ public class AuthController {
     @Autowired
     JwtUtils jwtUtils;
 
-    @PostMapping("/login")
-    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(loginRequest.getCorreo(), loginRequest.getContrasena()));
+    @Autowired
+    OTPService otpService;
 
-        SecurityContextHolder.getContext().setAuthentication(authentication);
-        String jwt = jwtUtils.generateJwtToken(authentication);
+    // Variable temporal para guardar el usuario en proceso de registro
+    private SignupRequest usuarioPendiente = null;
 
-        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
-        List<String> roles = userDetails.getAuthorities().stream()
-                .map(item -> item.getAuthority())
-                .collect(Collectors.toList());
-
-        Usuario usuario = usuarioRepository.findByCorreo(userDetails.getUsername())
-                .orElseThrow(() -> new RuntimeException("Error: Usuario no encontrado."));
-
-        return ResponseEntity.ok(new JwtResponse(jwt,
-                userDetails.getId(),
-                userDetails.getUsername(),
-                usuario.getNombre(),
-                roles));
-    }
-
-    @PostMapping("/registro")
-    public ResponseEntity<?> registerUser(@Valid @RequestBody SignupRequest signUpRequest) {
+    @PostMapping("/registro-inicial")
+    public ResponseEntity<?> registroInicial(@Valid @RequestBody SignupRequest signUpRequest) {
         if (usuarioRepository.existsByCorreo(signUpRequest.getCorreo())) {
             return ResponseEntity
                     .badRequest()
@@ -89,15 +72,44 @@ public class AuthController {
                     .body(new MessageResponse("Error: La cédula ya está registrada!"));
         }
 
+        // Guardar temporalmente los datos del usuario
+        usuarioPendiente = signUpRequest;
+
+        // Enviar código OTP
+        otpService.enviarCodigoOTP(signUpRequest.getCorreo());
+
+        return ResponseEntity.ok(new MessageResponse("Código OTP enviado. Por favor, verifica tu correo."));
+    }
+
+    @PostMapping("/verificar-otp")
+    public ResponseEntity<?> verificarOTP(@Valid @RequestBody VerificarOTPRequest verificarOTPRequest) {
+        // Verificar el código OTP
+        if (usuarioPendiente == null) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(new MessageResponse("No hay registro en proceso. Inicia el registro nuevamente."));
+        }
+
+        boolean codigoValido = otpService.verificarCodigoOTP(
+                usuarioPendiente.getCorreo(),
+                verificarOTPRequest.getCodigoOTP()
+        );
+
+        if (!codigoValido) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(new MessageResponse("Código OTP inválido o expirado."));
+        }
+
         // Crear nueva cuenta de usuario
         Usuario usuario = new Usuario();
-        usuario.setNombre(signUpRequest.getNombre());
-        usuario.setCorreo(signUpRequest.getCorreo());
-        usuario.setContrasena(encoder.encode(signUpRequest.getContrasena()));
-        usuario.setCedula(signUpRequest.getCedula());
-        usuario.setTelefono(signUpRequest.getTelefono());
+        usuario.setNombre(usuarioPendiente.getNombre());
+        usuario.setCorreo(usuarioPendiente.getCorreo());
+        usuario.setContrasena(encoder.encode(usuarioPendiente.getContrasena()));
+        usuario.setCedula(usuarioPendiente.getCedula());
+        usuario.setTelefono(usuarioPendiente.getTelefono());
 
-        Set<String> strRoles = signUpRequest.getRoles();
+        Set<String> strRoles = usuarioPendiente.getRoles();
         Set<Rol> roles = new HashSet<>();
 
         if (strRoles == null) {
@@ -128,6 +140,32 @@ public class AuthController {
         usuario.setRoles(roles);
         usuarioRepository.save(usuario);
 
+        // Limpiar el usuario pendiente
+        usuarioPendiente = null;
+
         return ResponseEntity.ok(new MessageResponse("Usuario registrado exitosamente!"));
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+        Authentication authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(loginRequest.getCorreo(), loginRequest.getContrasena()));
+
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+        String jwt = jwtUtils.generateJwtToken(authentication);
+
+        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+        List<String> roles = userDetails.getAuthorities().stream()
+                .map(item -> item.getAuthority())
+                .collect(Collectors.toList());
+
+        Usuario usuario = usuarioRepository.findByCorreo(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("Error: Usuario no encontrado."));
+
+        return ResponseEntity.ok(new JwtResponse(jwt,
+                userDetails.getId(),
+                userDetails.getUsername(),
+                usuario.getNombre(),
+                roles));
     }
 }
