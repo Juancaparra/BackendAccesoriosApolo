@@ -52,7 +52,7 @@ public class OTPService {
         // Enviar correo
         SimpleMailMessage mensaje = new SimpleMailMessage();
         mensaje.setTo(correo);
-        mensaje.setSubject("Código de Verificación para Registro");
+        mensaje.setSubject("Accesorios Apolo");
         mensaje.setText("Tu código de verificación es: " + codigoOTP +
                 "\nEste código expirará en " + otpExpirationMinutes + " minutos.");
         mensaje.setFrom("tu_correo@gmail.com"); // Reemplazar con tu correo
