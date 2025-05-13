@@ -1,6 +1,8 @@
 package com.accesoriosApolo.ws.service;
 
+import com.accesoriosApolo.ws.model.Usuario;
 import com.accesoriosApolo.ws.model.VerificacionOTP;
+import com.accesoriosApolo.ws.repository.UsuarioRepository;
 import com.accesoriosApolo.ws.repository.VerificacionOTPRepository;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -53,8 +55,13 @@ public class OTPService {
         SimpleMailMessage mensaje = new SimpleMailMessage();
         mensaje.setTo(correo);
         mensaje.setSubject("Accesorios Apolo");
-        mensaje.setText("Tu código de verificación es: " + codigoOTP +
-                "\nEste código expirará en " + otpExpirationMinutes + " minutos.");
+        mensaje.setText("Hola,\n\n" +
+                "Gracias por usar Accesorios Apolo. Para continuar con el proceso de verificación, por favor utiliza el siguiente código:\n\n" +
+                "Código de verificación: " + codigoOTP + "\n\n" +
+                "Este código expirará en " + otpExpirationMinutes + " minutos.\n\n" +
+                "Si no solicitaste este código, puedes ignorar este mensaje.\n\n" +
+                "¡Gracias por confiar en nosotros!\n" +
+                "Equipo de Accesorios Apolo.");
         mensaje.setFrom("tu_correo@gmail.com"); // Reemplazar con tu correo
 
         mailSender.send(mensaje);

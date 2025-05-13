@@ -14,17 +14,12 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import com.accesoriosApolo.ws.model.Rol;
 import com.accesoriosApolo.ws.model.Usuario;
 import com.accesoriosApolo.ws.dto.LoginRequest;
 import com.accesoriosApolo.ws.dto.SignupRequest;
-import com.accesoriosApolo.ws.request.VerificarOTPRequest;
 import com.accesoriosApolo.ws.dto.JwtResponse;
 import com.accesoriosApolo.ws.dto.MessageResponse;
 import com.accesoriosApolo.ws.repository.RolRepository;
@@ -32,11 +27,13 @@ import com.accesoriosApolo.ws.repository.UsuarioRepository;
 import com.accesoriosApolo.ws.security.JwtUtils;
 import com.accesoriosApolo.ws.security.UserDetailsImpl;
 import com.accesoriosApolo.ws.service.OTPService;
+import com.accesoriosApolo.ws.request.VerificarOTPRequest;
 
 @CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
+
     @Autowired
     AuthenticationManager authenticationManager;
 
@@ -55,27 +52,19 @@ public class AuthController {
     @Autowired
     OTPService otpService;
 
-    // Variable temporal para guardar el usuario en proceso de registro
     private SignupRequest usuarioPendiente = null;
 
     @PostMapping("/registro-inicial")
     public ResponseEntity<?> registroInicial(@Valid @RequestBody SignupRequest signUpRequest) {
         if (usuarioRepository.existsByCorreo(signUpRequest.getCorreo())) {
-            return ResponseEntity
-                    .badRequest()
-                    .body(new MessageResponse("Error: El correo ya está en uso!"));
+            return ResponseEntity.badRequest().body(new MessageResponse("Error: El correo ya está en uso!"));
         }
 
         if (signUpRequest.getCedula() != null && usuarioRepository.existsByCedula(signUpRequest.getCedula())) {
-            return ResponseEntity
-                    .badRequest()
-                    .body(new MessageResponse("Error: La cédula ya está registrada!"));
+            return ResponseEntity.badRequest().body(new MessageResponse("Error: La cédula ya está registrada!"));
         }
 
-        // Guardar temporalmente los datos del usuario
         usuarioPendiente = signUpRequest;
-
-        // Enviar código OTP
         otpService.enviarCodigoOTP(signUpRequest.getCorreo());
 
         return ResponseEntity.ok(new MessageResponse("Código OTP enviado. Por favor, verifica tu correo."));
@@ -83,11 +72,8 @@ public class AuthController {
 
     @PostMapping("/verificar-otp")
     public ResponseEntity<?> verificarOTP(@Valid @RequestBody VerificarOTPRequest verificarOTPRequest) {
-        // Verificar el código OTP
         if (usuarioPendiente == null) {
-            return ResponseEntity
-                    .badRequest()
-                    .body(new MessageResponse("No hay registro en proceso. Inicia el registro nuevamente."));
+            return ResponseEntity.badRequest().body(new MessageResponse("No hay registro en proceso. Inicia el registro nuevamente."));
         }
 
         boolean codigoValido = otpService.verificarCodigoOTP(
@@ -96,12 +82,9 @@ public class AuthController {
         );
 
         if (!codigoValido) {
-            return ResponseEntity
-                    .badRequest()
-                    .body(new MessageResponse("Código OTP inválido o expirado."));
+            return ResponseEntity.badRequest().body(new MessageResponse("Código OTP inválido o expirado."));
         }
 
-        // Crear nueva cuenta de usuario
         Usuario usuario = new Usuario();
         usuario.setNombre(usuarioPendiente.getNombre());
         usuario.setCorreo(usuarioPendiente.getCorreo());
@@ -120,19 +103,16 @@ public class AuthController {
             strRoles.forEach(role -> {
                 switch (role) {
                     case "admin":
-                        Rol adminRole = rolRepository.findByNombre("ROLE_ADMIN")
-                                .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado."));
-                        roles.add(adminRole);
+                        roles.add(rolRepository.findByNombre("ROLE_ADMIN")
+                                .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado.")));
                         break;
                     case "mod":
-                        Rol modRole = rolRepository.findByNombre("ROLE_MODERATOR")
-                                .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado."));
-                        roles.add(modRole);
+                        roles.add(rolRepository.findByNombre("ROLE_MODERATOR")
+                                .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado.")));
                         break;
                     default:
-                        Rol userRole = rolRepository.findByNombre("ROLE_USER")
-                                .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado."));
-                        roles.add(userRole);
+                        roles.add(rolRepository.findByNombre("ROLE_USER")
+                                .orElseThrow(() -> new RuntimeException("Error: Rol no encontrado.")));
                 }
             });
         }
@@ -140,10 +120,31 @@ public class AuthController {
         usuario.setRoles(roles);
         usuarioRepository.save(usuario);
 
-        // Limpiar el usuario pendiente
+        Authentication authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(
+                        usuarioPendiente.getCorreo(),
+                        usuarioPendiente.getContrasena()
+                )
+        );
+
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+        String jwt = jwtUtils.generateJwtToken(authentication);
+
+        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+        List<String> rolesList = userDetails.getAuthorities().stream()
+                .map(item -> item.getAuthority())
+                .collect(Collectors.toList());
+
         usuarioPendiente = null;
 
-        return ResponseEntity.ok(new MessageResponse("Usuario registrado exitosamente!"));
+        return ResponseEntity.ok(new JwtResponse(
+                jwt,
+                userDetails.getId(),
+                userDetails.getUsername(),
+                usuario.getNombre(),
+                rolesList,
+                "Usuario registrado e inició sesión correctamente."
+        ));
     }
 
     @PostMapping("/login")
@@ -162,10 +163,14 @@ public class AuthController {
         Usuario usuario = usuarioRepository.findByCorreo(userDetails.getUsername())
                 .orElseThrow(() -> new RuntimeException("Error: Usuario no encontrado."));
 
-        return ResponseEntity.ok(new JwtResponse(jwt,
+        // ✅ Aquí se agregó el mensaje faltante como sexto argumento
+        return ResponseEntity.ok(new JwtResponse(
+                jwt,
                 userDetails.getId(),
                 userDetails.getUsername(),
                 usuario.getNombre(),
-                roles));
+                roles,
+                "Inicio de sesión exitoso." // <-- mensaje agregado
+        ));
     }
 }
